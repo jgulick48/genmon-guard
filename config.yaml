@@ -1,0 +1,68 @@
+# genmon-guard configuration.
+#
+# This repo is public: keep placeholders here. Real hosts go in the deployed
+# ConfigMap. Secrets never go in this file; they are read from files (a mounted
+# Kubernetes Secret) or from GENMON_GUARD_* environment variables.
+# Every value below is the default unless marked "example".
+
+genmon:
+  url: https://genmon.example.lan           # example
+  username_file: /etc/genmon-guard/genmon-user
+  password_file: /etc/genmon-guard/genmon-password
+  insecure_skip_verify: true    # genmon uses a self-signed cert; or set ca_file
+  # ca_file: /etc/genmon-guard/genmon-ca.pem
+  timezone: America/Denver      # controller-local time used in the Alarm Log (default: Local)
+  timeout: 15s
+
+demand:
+  metrics_url: http://lxp-bridge.example.svc:8080/metrics   # example
+  metric: lxp_gen_dry_contact
+  labels:
+    deploymentID: BA00000000    # example: your inverter datalog serial
+
+slack:
+  webhook_url_file: /etc/genmon-guard/slack-webhook
+
+# Automatic reset of a failed start (RPM Sense Loss).
+# On a failed start with the start demand active, genmon-guard waits
+# retry_delay, sends setremote=resetalarm, waits settle, sends setremote=auto,
+# waits confirm_delay, then checks that Switch State is Auto.
+reset:
+  # true: decide, log and alert "would reset", but never send setremote.
+  # Leave true until a real failure has logged a correct "would reset".
+  dry_run: true
+
+  # Alarm codes that may be reset. 1500 = RPM Sense Loss.
+  # E-Stop (2800), Low Fuel (2700) and Low Fuel Level (2680) are rejected.
+  alarm_codes: [1500]
+
+  # Resets allowed per demand period. 3 = the original start plus up to
+  # 3 retries; the next failure gives up. 0 = alert only.
+  max_retries: 3
+
+  # Wait after the failure before resetting, so the starter can cool and the
+  # cranking battery can recover.
+  retry_delay: 3m
+
+  # Pause between resetalarm and auto (max 1m).
+  settle: 3s
+
+  # Pause after auto before reading Switch State back to confirm Auto (max 1m).
+  confirm_delay: 3s
+
+  # The engine must run this long after a retry to count as recovered.
+  success_hold: 2m
+
+  # RPM at or above which the engine counts as running (in addition to an
+  # Engine State of Running / Exercising).
+  running_rpm: 1500
+
+  # On startup, an alarm older than this counts as already handled and is
+  # never reset (state is in memory only).
+  startup_grace: 5m
+
+poll_interval: 10s
+outage_alert_after: 10m  # alert once genmon / the demand source is unreadable this long
+listen: ":8080"          # /metrics and /healthz
+log_level: info
+log_format: json

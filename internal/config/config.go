@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -38,16 +39,11 @@ type Config struct {
 		WebhookURLFile string `yaml:"webhook_url_file"`
 	} `yaml:"slack"`
 
+	// Reset holds every option that controls the automatic alarm reset.
+	Reset Reset `yaml:"reset"`
+
 	PollInterval     time.Duration `yaml:"poll_interval"`
-	RetryDelay       time.Duration `yaml:"retry_delay"`
-	MaxRetries       *int          `yaml:"max_retries"`
-	SuccessHold      time.Duration `yaml:"success_hold"`
-	StartupGrace     time.Duration `yaml:"startup_grace"`
 	OutageAlertAfter time.Duration `yaml:"outage_alert_after"`
-	ResetSettle      time.Duration `yaml:"reset_settle"`
-	RunningRPM       int           `yaml:"running_rpm"`
-	RetryAlarmCodes  []int         `yaml:"retry_alarm_codes"`
-	DryRun           *bool         `yaml:"dry_run"` // nil → true
 	Listen           string        `yaml:"listen"`
 	LogLevel         string        `yaml:"log_level"`
 	LogFormat        string        `yaml:"log_format"` // json (default) or text
@@ -56,6 +52,23 @@ type Config struct {
 	GenmonPassword  string `yaml:"-"`
 	SlackWebhookURL string `yaml:"-"`
 }
+
+// Reset configures when and how genmon-guard resets a failed start.
+type Reset struct {
+	DryRun       *bool         `yaml:"dry_run"`       // nil → true: decide and alert, never send setremote
+	AlarmCodes   []int         `yaml:"alarm_codes"`   // codes that may be reset (default [1500])
+	MaxRetries   *int          `yaml:"max_retries"`   // resets per demand period (default 3; 0 = alert only)
+	RetryDelay   time.Duration `yaml:"retry_delay"`   // wait after the failure before resetting (3m)
+	Settle       time.Duration `yaml:"settle"`        // pause between resetalarm and auto (3s)
+	ConfirmDelay time.Duration `yaml:"confirm_delay"` // pause after auto before checking Switch State (3s)
+	SuccessHold  time.Duration `yaml:"success_hold"`  // engine must run this long to count as recovered (2m)
+	RunningRPM   int           `yaml:"running_rpm"`   // RPM at or above which the engine counts as running (1500)
+	StartupGrace time.Duration `yaml:"startup_grace"` // alarms older than this at startup are not reset (5m)
+}
+
+// NeverResetCodes are alarms that must never be reset automatically:
+// E-Stop (2800), Low Fuel (2700) and Low Fuel Level (2680).
+var NeverResetCodes = []int{2800, 2700, 2680}
 
 // Env names. Secrets may be given directly by env (handy for local runs);
 // in Kubernetes prefer the *_FILE variants or the YAML *_file keys.
@@ -113,12 +126,13 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 		}
 	}
 	dur := map[string]*time.Duration{
-		"POLL_INTERVAL":      &c.PollInterval,
-		"RETRY_DELAY":        &c.RetryDelay,
-		"SUCCESS_HOLD":       &c.SuccessHold,
-		"STARTUP_GRACE":      &c.StartupGrace,
-		"OUTAGE_ALERT_AFTER": &c.OutageAlertAfter,
-		"RESET_SETTLE":       &c.ResetSettle,
+		"POLL_INTERVAL":       &c.PollInterval,
+		"OUTAGE_ALERT_AFTER":  &c.OutageAlertAfter,
+		"RETRY_DELAY":         &c.Reset.RetryDelay,
+		"RESET_SETTLE":        &c.Reset.Settle,
+		"RESET_CONFIRM_DELAY": &c.Reset.ConfirmDelay,
+		"SUCCESS_HOLD":        &c.Reset.SuccessHold,
+		"STARTUP_GRACE":       &c.Reset.StartupGrace,
 	}
 	for k, p := range dur {
 		if v := getenv(EnvPrefix + k); v != "" {
@@ -134,7 +148,25 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 		if err != nil {
 			return fmt.Errorf("%sMAX_RETRIES: %w", EnvPrefix, err)
 		}
-		c.MaxRetries = &n
+		c.Reset.MaxRetries = &n
+	}
+	if v := getenv(EnvPrefix + "RUNNING_RPM"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return fmt.Errorf("%sRUNNING_RPM: %w", EnvPrefix, err)
+		}
+		c.Reset.RunningRPM = n
+	}
+	if v := getenv(EnvPrefix + "RESET_ALARM_CODES"); v != "" {
+		var codes []int
+		for _, f := range strings.Split(v, ",") {
+			n, err := strconv.Atoi(strings.TrimSpace(f))
+			if err != nil {
+				return fmt.Errorf("%sRESET_ALARM_CODES: %w", EnvPrefix, err)
+			}
+			codes = append(codes, n)
+		}
+		c.Reset.AlarmCodes = codes
 	}
 	for k, p := range map[string]*bool{"DRY_RUN": nil, "GENMON_INSECURE_SKIP_VERIFY": &c.Genmon.InsecureSkipVerify} {
 		v := getenv(EnvPrefix + k)
@@ -146,7 +178,7 @@ func (c *Config) applyEnv(getenv func(string) string) error {
 			return fmt.Errorf("%s%s: %w", EnvPrefix, k, err)
 		}
 		if p == nil {
-			c.DryRun = &b
+			c.Reset.DryRun = &b
 		} else {
 			*p = b
 		}
@@ -161,26 +193,27 @@ func (c *Config) defaults() {
 		}
 	}
 	setDur(&c.PollInterval, 10*time.Second)
-	setDur(&c.RetryDelay, 3*time.Minute)
-	setDur(&c.SuccessHold, 2*time.Minute)
-	setDur(&c.StartupGrace, 5*time.Minute)
 	setDur(&c.OutageAlertAfter, 10*time.Minute)
-	setDur(&c.ResetSettle, 3*time.Second)
+	setDur(&c.Reset.RetryDelay, 3*time.Minute)
+	setDur(&c.Reset.Settle, 3*time.Second)
+	setDur(&c.Reset.ConfirmDelay, 3*time.Second)
+	setDur(&c.Reset.SuccessHold, 2*time.Minute)
+	setDur(&c.Reset.StartupGrace, 5*time.Minute)
 	setDur(&c.Genmon.Timeout, 15*time.Second)
 	setDur(&c.Demand.Timeout, 5*time.Second)
-	if c.MaxRetries == nil {
+	if c.Reset.MaxRetries == nil {
 		n := 3
-		c.MaxRetries = &n
+		c.Reset.MaxRetries = &n
 	}
-	if c.DryRun == nil {
+	if c.Reset.DryRun == nil {
 		t := true
-		c.DryRun = &t
+		c.Reset.DryRun = &t
 	}
-	if len(c.RetryAlarmCodes) == 0 {
-		c.RetryAlarmCodes = []int{1500}
+	if len(c.Reset.AlarmCodes) == 0 {
+		c.Reset.AlarmCodes = []int{1500}
 	}
-	if c.RunningRPM == 0 {
-		c.RunningRPM = 1500
+	if c.Reset.RunningRPM == 0 {
+		c.Reset.RunningRPM = 1500
 	}
 	if c.Demand.Metric == "" {
 		c.Demand.Metric = "lxp_gen_dry_contact"
@@ -243,8 +276,26 @@ func (c *Config) validate() error {
 	if c.Demand.MetricsURL == "" {
 		errs = append(errs, errors.New("demand.metrics_url is required"))
 	}
-	if *c.MaxRetries < 0 {
-		errs = append(errs, errors.New("max_retries must be >= 0"))
+	r := c.Reset
+	if *r.MaxRetries < 0 {
+		errs = append(errs, errors.New("reset.max_retries must be >= 0"))
+	}
+	for _, code := range r.AlarmCodes {
+		if slices.Contains(NeverResetCodes, code) {
+			errs = append(errs, fmt.Errorf("reset.alarm_codes: %d must never be reset automatically", code))
+		}
+	}
+	for name, d := range map[string]time.Duration{"retry_delay": r.RetryDelay, "settle": r.Settle,
+		"confirm_delay": r.ConfirmDelay, "success_hold": r.SuccessHold, "startup_grace": r.StartupGrace} {
+		if d < 0 {
+			errs = append(errs, fmt.Errorf("reset.%s must not be negative", name))
+		}
+	}
+	if r.Settle > time.Minute || r.ConfirmDelay > time.Minute {
+		errs = append(errs, errors.New("reset.settle and reset.confirm_delay must be at most 1m"))
+	}
+	if r.RunningRPM < 0 {
+		errs = append(errs, errors.New("reset.running_rpm must not be negative"))
 	}
 	if c.PollInterval < time.Second {
 		errs = append(errs, errors.New("poll_interval must be at least 1s"))

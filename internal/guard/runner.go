@@ -44,7 +44,8 @@ type Runner struct {
 	Metrics      *metrics.Registry
 	Log          *slog.Logger
 	PollInterval time.Duration
-	ResetSettle  time.Duration // pause between resetalarm, auto and the confirming status read
+	ResetSettle  time.Duration // pause between resetalarm and auto
+	ConfirmDelay time.Duration // pause after auto before reading Switch State back
 	DryRun       bool
 
 	now      func() time.Time
@@ -77,6 +78,9 @@ func (r *Runner) init() {
 	}
 	if r.ResetSettle <= 0 {
 		r.ResetSettle = 3 * time.Second
+	}
+	if r.ConfirmDelay <= 0 {
+		r.ConfirmDelay = 3 * time.Second
 	}
 	if r.Log == nil {
 		r.Log = slog.Default()
@@ -166,7 +170,7 @@ func (r *Runner) reset(ctx context.Context) (genmon.Status, error) {
 	if err := r.Genmon.SetRemote(ctx, "auto"); err != nil {
 		return genmon.Status{}, err
 	}
-	if err := r.sleep(ctx, r.ResetSettle); err != nil {
+	if err := r.sleep(ctx, r.ConfirmDelay); err != nil {
 		return genmon.Status{}, err
 	}
 	return r.Genmon.Status(ctx)

@@ -35,5 +35,3 @@ go.work.sum
 # Build outputs
 /bin/
 
-# Local config (may reference real hosts)
-/config.yaml

@@ -194,3 +194,21 @@ func TestRunnerLiveResetLegacyGenmon(t *testing.T) {
 		t.Fatalf("commands = %q", got)
 	}
 }
+
+func TestRunnerResetUsesSettleThenConfirmDelay(t *testing.T) {
+	r, f, dem, _, now := newRunner(t, false)
+	r.ResetSettle, r.ConfirmDelay = 5*time.Second, 11*time.Second
+	var sleeps []time.Duration
+	r.sleep = func(_ context.Context, d time.Duration) error { sleeps = append(sleeps, d); return nil }
+	ctx := context.Background()
+	dem.v = true
+	r.Tick(ctx)
+	*now = now.Add(time.Minute)
+	failNow(f, *now)
+	r.Tick(ctx)
+	*now = now.Add(3 * time.Minute)
+	r.Tick(ctx)
+	if !slices.Equal(sleeps, []time.Duration{5 * time.Second, 11 * time.Second}) {
+		t.Fatalf("sleeps = %v, want [5s 11s]", sleeps)
+	}
+}

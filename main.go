@@ -48,9 +48,10 @@ func run() int {
 	loc, _ := cfg.Location() // validated by Load
 
 	log.Info("genmon-guard starting", "version", version, "commit", commit,
-		"dry_run", *cfg.DryRun, "genmon", cfg.Genmon.URL, "demand", cfg.Demand.MetricsURL,
-		"max_retries", *cfg.MaxRetries, "retry_delay", cfg.RetryDelay.String(), "timezone", loc.String())
-	if *cfg.DryRun {
+		"dry_run", *cfg.Reset.DryRun, "genmon", cfg.Genmon.URL, "demand", cfg.Demand.MetricsURL,
+		"max_retries", *cfg.Reset.MaxRetries, "retry_delay", cfg.Reset.RetryDelay.String(),
+		"alarm_codes", cfg.Reset.AlarmCodes, "timezone", loc.String())
+	if *cfg.Reset.DryRun {
 		log.Warn("DRY RUN: setremote commands will be logged and alerted as \"would reset\", never sent")
 	}
 	if cfg.GenmonPassword == "" || cfg.Genmon.Username == "" {
@@ -78,9 +79,9 @@ func run() int {
 	guard.DescribeMetrics(reg)
 	runner := &guard.Runner{
 		Machine: guard.New(guard.Config{
-			RetryDelay: cfg.RetryDelay, SuccessHold: cfg.SuccessHold, StartupGrace: cfg.StartupGrace,
-			OutageAlertAfter: cfg.OutageAlertAfter, MaxRetries: *cfg.MaxRetries,
-			RetryAlarmCodes: cfg.RetryAlarmCodes, RunningRPM: cfg.RunningRPM, DryRun: *cfg.DryRun,
+			RetryDelay: cfg.Reset.RetryDelay, SuccessHold: cfg.Reset.SuccessHold, StartupGrace: cfg.Reset.StartupGrace,
+			OutageAlertAfter: cfg.OutageAlertAfter, MaxRetries: *cfg.Reset.MaxRetries,
+			RetryAlarmCodes: cfg.Reset.AlarmCodes, RunningRPM: cfg.Reset.RunningRPM, DryRun: *cfg.Reset.DryRun,
 		}, log),
 		Genmon: gc,
 		Demand: demand.New(demand.Config{URL: cfg.Demand.MetricsURL, Metric: cfg.Demand.Metric,
@@ -89,8 +90,9 @@ func run() int {
 		Metrics:      reg,
 		Log:          log,
 		PollInterval: cfg.PollInterval,
-		ResetSettle:  cfg.ResetSettle,
-		DryRun:       *cfg.DryRun,
+		ResetSettle:  cfg.Reset.Settle,
+		ConfirmDelay: cfg.Reset.ConfirmDelay,
+		DryRun:       *cfg.Reset.DryRun,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
