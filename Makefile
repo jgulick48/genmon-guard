@@ -18,7 +18,8 @@ VERSION ?= $(shell date -u +%Y.%m.%d-%H%M)
 VERSION := $(VERSION)
 GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 PLATFORMS ?= linux/amd64,linux/arm64
-BUILDER ?= casp-build-01
+# Shared docker-container buildx builder (its node runs on the casp-build-01 host).
+BUILDER ?= casp-build
 BIN := bin/genmon-guard
 
 # ====================================================================================
