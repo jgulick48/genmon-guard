@@ -1,0 +1,32 @@
+# genmon-guard example config. Copy to config.yaml (git-ignored) and adjust.
+# Secrets are never put in this file: they are read from files (a mounted
+# Kubernetes Secret) or from GENMON_GUARD_* environment variables.
+genmon:
+  url: https://genmon.example.lan
+  username_file: /etc/genmon-guard/genmon-user
+  password_file: /etc/genmon-guard/genmon-password
+  insecure_skip_verify: true    # genmon uses a self-signed cert; or set ca_file
+  # ca_file: /etc/genmon-guard/genmon-ca.pem
+  timezone: America/Denver      # controller-local time used in the Alarm Log
+  timeout: 15s
+demand:
+  metrics_url: http://lxp-bridge.example.svc:8080/metrics
+  metric: lxp_gen_dry_contact
+  labels:
+    deploymentID: BA00000000    # your inverter datalog serial
+slack:
+  webhook_url_file: /etc/genmon-guard/slack-webhook
+
+poll_interval: 10s
+retry_delay: 3m         # let the starter cool and the battery recover
+max_retries: 3          # resets per demand period before giving up
+success_hold: 2m        # engine must run this long to count as recovered
+startup_grace: 5m       # alarms older than this at startup are treated as handled
+outage_alert_after: 10m # alert once genmon / demand source is unreadable this long
+reset_settle: 3s        # pause between resetalarm, auto and the confirming read
+running_rpm: 1500
+retry_alarm_codes: [1500]   # RPM Sense Loss only. Never add E-Stop / Low Fuel.
+dry_run: true           # log/alert "would reset" only; set false to go live
+listen: ":8080"         # /metrics and /healthz
+log_level: info
+log_format: json

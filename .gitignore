@@ -31,3 +31,9 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Build outputs
+/bin/
+
+# Local config (may reference real hosts)
+/config.yaml
